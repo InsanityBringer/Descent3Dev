@@ -31,6 +31,7 @@
 #include <regstr.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <Xinput.h>
 
 
 //////////////////////////////////////////////////////////////////////////////
@@ -78,6 +79,8 @@ void joymm_get_pos(tJoystick handle, tJoyPos *pos);
 tJoystick joydi_init_stick(int ffjoyid);
 void joydi_get_pos(tJoystick handle, tJoyPos *pos);
 
+void joyxi_init(int id);
+
 //	joystick forcefeedback shares
 extern LPDIRECTINPUTDEVICE2 ddio_ff_get_joystick_obj(tDevice dev);
 
@@ -116,13 +119,23 @@ bool joy_Init(bool emulation)
 	WJD.njoy = n;
 
 // attempt directinput initialization.
-	n = (!emulation) ? ddio_ffjoy_Init() : 0;
+	int dio_count = (!emulation) ? ddio_ffjoy_Init() : 0;
+	XINPUT_STATE _discard;
+	int xinput_success = XInputGetState(0, &_discard) == ERROR_SUCCESS
+	|| XInputGetState(1, &_discard) == ERROR_SUCCESS
+	|| XInputGetState(2, &_discard) == ERROR_SUCCESS
+	|| XInputGetState(3, &_discard) == ERROR_SUCCESS;
 
-	if(n > 0) {
+    if (xinput_success) {
+		for (i = 0; i < 4; i++) {
+			joyxi_init(i);
+		}
+	}
+	else if(dio_count > 0) {
 		WJD.lpdi = DInputData.lpdi;
 
 	// map all ffjoysticks to our joystick structure.
-		for (i = 0; i < n; i++)
+		for (i = 0; i < dio_count; i++)
 		{
 			joydi_init_stick(i);
 		}
@@ -205,10 +218,27 @@ void joy_GetPos(tJoystick stick, tJoyPos *pos)
 		return;
 	}
 
+	
+
 	if (WJD.lpdi) {
 		joydi_get_pos(stick, pos);
 	}
 	else {
+		XINPUT_STATE state = {0};
+		if (XInputGetState(stick, &state) == ERROR_SUCCESS) {
+			pos->x = (int)(state.Gamepad.sThumbLX/32767.0f*128.0f);
+			pos->y = -(int)(state.Gamepad.sThumbLY/32767.0f*128.0f);
+			pos->z = (int)(state.Gamepad.bLeftTrigger/255.0f*128.0f);
+			pos->r = (int)(state.Gamepad.sThumbRX/32767.0f*128.0f);
+			pos->u = (int)(state.Gamepad.sThumbRY/32767.0f*128.0f);
+			pos->v = (int)(state.Gamepad.bRightTrigger/255.0f*128.0f);
+			pos->buttons = state.Gamepad.wButtons;
+			pos->buttons |= (state.Gamepad.bLeftTrigger > 0) ? (1<<16) : 0;
+			pos->buttons |= (state.Gamepad.bRightTrigger > 0) ? (1<<17) : 0;
+			pos->btn = 0;
+			return;
+		}
+
 		joymm_get_pos(stick, pos);
 	}
 }
@@ -256,7 +286,33 @@ void ddio_InternalJoyFrame()
 	}
 }
 
-
+void joyxi_init(int i)
+{
+	XINPUT_STATE state = {0};
+	if (XInputGetState(i, &state) == ERROR_SUCCESS) {
+		WJD.joystick[i].valid = 1;
+		WJD.joystick[i].joy_context.joyid = i;
+		WJD.joystick[i].caps.axes_mask = 
+		JOYFLAG_XVALID+JOYFLAG_YVALID+
+		JOYFLAG_RVALID+JOYFLAG_UVALID+JOYFLAG_VVALID+
+		JOYFLAG_ZVALID;
+		WJD.joystick[i].caps.num_btns = 18;
+		strcpy(WJD.joystick[i].caps.name, "XInput Joystick");
+		WJD.joystick[i].caps.minx = -32768;
+		WJD.joystick[i].caps.miny = -32768;
+		WJD.joystick[i].caps.minz = 0;
+		WJD.joystick[i].caps.minr = -32768;
+		WJD.joystick[i].caps.minu = -32768;
+		WJD.joystick[i].caps.minv = -0;
+		
+		WJD.joystick[i].caps.maxx = 32767;
+		WJD.joystick[i].caps.maxy = 32767;
+		WJD.joystick[i].caps.maxz = 255;
+		WJD.joystick[i].caps.maxr = 32767;
+		WJD.joystick[i].caps.maxu = 32767;
+		WJD.joystick[i].caps.maxv = 255;
+	}
+}
 
 //////////////////////////////////////////////////////////////////////////////
 // initializes multimedia version of joystick interface.
